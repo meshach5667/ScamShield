@@ -3,9 +3,12 @@ import { ScamAnalysisResult } from "../types";
 
 // Initialize the Gemini API
 // Note: process.env.GEMINI_API_KEY is injected by AI Studio
-const ai = new GoogleGenAI({ 
-  apiKey: process.env.GEMINI_API_KEY || (import.meta as any).env.VITE_GEMINI_API_KEY || "" 
-});
+const apiKey = process.env.GEMINI_API_KEY || "";
+if (!apiKey) {
+  console.warn("GEMINI_API_KEY is not set. AI features may not work.");
+}
+
+const ai = new GoogleGenAI({ apiKey });
 
 const SYSTEM_PROMPT = `You are ScamShield AI, a scam detection assistant.
 
@@ -75,13 +78,46 @@ const RESPONSE_SCHEMA = {
   required: ["verdict", "confidence", "scamType", "explanation", "redFlags", "safetyAdvice"],
 };
 
+async function callGeminiWithRetry(params: any, retries = 2): Promise<any> {
+  const models = ["gemini-3-flash-preview", "gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview", "gemini-1.5-flash"];
+  let lastError: any;
+
+  for (let i = 0; i < models.length; i++) {
+    const currentModel = models[i];
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const response = await ai.models.generateContent({
+          ...params,
+          model: currentModel,
+        });
+        return response;
+      } catch (error: any) {
+        lastError = error;
+        const is503 = error.message?.includes("503") || error.message?.includes("high demand") || error.status === "UNAVAILABLE";
+        
+        if (is503) {
+          console.warn(`Model ${currentModel} is busy (Attempt ${attempt + 1}). ${attempt < retries ? "Retrying..." : "Trying fallback model..."}`);
+          if (attempt < retries) {
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1))); // Simple backoff
+            continue;
+          }
+          // If all retries for this model fail, the outer loop will try the next model
+        } else {
+          // If it's not a 503, throw immediately
+          throw error;
+        }
+      }
+    }
+  }
+  throw lastError;
+}
+
 export async function transcribeAudio(
   audioBuffer: string,
   mimeType: string
 ): Promise<string> {
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+    const response = await callGeminiWithRetry({
       contents: {
         parts: [
           { text: TRANSCRIPTION_PROMPT },
@@ -130,8 +166,7 @@ export async function analyzeScam(
   }
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+    const response = await callGeminiWithRetry({
       contents: { parts },
       config: {
         systemInstruction: SYSTEM_PROMPT,
