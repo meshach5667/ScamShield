@@ -7,9 +7,9 @@ const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || (import.meta as any).env.VITE_GEMINI_API_KEY || "" 
 });
 
-const SYSTEM_PROMPT = `You are ScamShield AI, a multimodal scam detection assistant.
+const SYSTEM_PROMPT = `You are ScamShield AI, a scam detection assistant.
 
-Your job is to analyze suspicious screenshots and text messages and determine whether they are scams, suspicious, or safe.
+Your job is to analyze suspicious messages, screenshots, and voice note transcripts and determine whether they are scams, suspicious, or safe.
 
 Focus especially on scams common in Nigeria and Africa, such as:
 - fake bank alerts
@@ -19,19 +19,28 @@ Focus especially on scams common in Nigeria and Africa, such as:
 - investment scams
 - impersonation scams
 - urgent money requests
-- POS/transfer scams
+- POS and transfer scams
 
 Look for:
 - urgency
 - fear tactics
-- suspicious links
+- suspicious requests
 - impersonation
 - requests for money or sensitive data
 - emotional manipulation
+- fake authority
+- pressure to act immediately
 
 Return your response ONLY as valid JSON.
 If uncertain, use SUSPICIOUS.
-Keep explanation concise but clear.`;
+Keep explanation concise but useful.`;
+
+const TRANSCRIPTION_PROMPT = `You are a transcription assistant.
+Transcribe this audio clearly and accurately.
+Return only the spoken words as plain text.
+Do not summarize.
+Do not add labels.
+Do not explain anything.`;
 
 const RESPONSE_SCHEMA = {
   type: Type.OBJECT,
@@ -66,22 +75,52 @@ const RESPONSE_SCHEMA = {
   required: ["verdict", "confidence", "scamType", "explanation", "redFlags", "safetyAdvice"],
 };
 
+export async function transcribeAudio(
+  audioBuffer: string,
+  mimeType: string
+): Promise<string> {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: {
+        parts: [
+          { text: TRANSCRIPTION_PROMPT },
+          {
+            inlineData: {
+              data: audioBuffer,
+              mimeType: mimeType,
+            },
+          },
+        ],
+      },
+    });
+
+    return response.text || "";
+  } catch (error) {
+    console.error("Gemini Transcription Error:", error);
+    throw error;
+  }
+}
+
 export async function analyzeScam(
   text?: string,
   imageBuffer?: string,
-  mimeType?: string
+  imageMimeType?: string,
+  sourceType: "text" | "screenshot" | "voicenote" = "text"
 ): Promise<ScamAnalysisResult> {
   const parts: any[] = [];
 
+  const sourceLabel = sourceType === "voicenote" ? "Voice note transcript" : sourceType === "screenshot" ? "Screenshot text" : "Text message";
+  
   if (text) {
-    parts.push({ text: `Text message to analyze: ${text}` });
+    parts.push({ text: `${sourceLabel} to analyze: ${text}` });
   }
 
-  if (imageBuffer && mimeType) {
+  if (imageBuffer && imageMimeType) {
     parts.push({
       inlineData: {
         data: imageBuffer,
-        mimeType: mimeType,
+        mimeType: imageMimeType,
       },
     });
   }

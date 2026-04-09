@@ -1,5 +1,5 @@
 {
   "name": "ScamShield AI",
-  "description": "AI-powered scam detection for suspicious messages and screenshots.",
-  "requestFramePermissions": []
+  "description": "AI-powered scam detection for suspicious messages, screenshots, and audio.",
+  "requestFramePermissions": ["microphone"]
 }
